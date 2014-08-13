@@ -146,11 +146,6 @@ function uploadCurrentChunk(cb){
 	})
 }
 
-//Handling queue
-var queure = async.queue
-
-
-
 function handleChunk(cb){
 	async.waterfall([
 
@@ -201,8 +196,8 @@ function handleChunk(cb){
 }
 
 var chunkQueue = async.queue(handleChunk, 1)
-chunkQueue.drain = function(){
 
+chunkQueue.drain = function(){
 	//If the queue is empty, is our task ended? If so, end the upload and end the process
 	if(taskEnded){
 		completeCurrentUpload(function(err){

@@ -75,6 +75,14 @@ function generateNewUploadParameters(cb){
 		}
 
 		currentFileStartTime = new Date()
+		//Since we are generating a new currentFileStartTime, we are adding a write to buffer timeout in case of rarely used buffers.
+		setTimeout(function(){
+			if(chunkQueue.length() == 0){
+				//Push an empty chunk to the queue to trigger file write and close
+				chunkQueue.push('')
+			}
+		}, maxLogLife)
+
 		filename = address + '_' + currentFileStartTime.getDate() + '-' +
 				'-' + currentFileStartTime.getMonth() + '-' + currentFileStartTime.getFullYear() + '_' + currentFileStartTime.getHours() + ':' + currentFileStartTime.getMinutes() + '_' + currentFileStartTime.getTime() + '.log'
 

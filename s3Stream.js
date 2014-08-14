@@ -32,6 +32,11 @@ if(minimumChunkSize < 5){
 
 const partSize = 1024 * 1024 * minimumChunkSize // 5mb minimum chunk size save the last part.
 const maxUploadRetries = argv.uploadRetries || 3
+if(argv.maxLogLife){
+	var maxLogLife = argv.maxLogLife * 60 * 1000
+} else {
+	var maxLogLife = 30 * 60 * 1000
+}
 
 
 //From here down is the uploader portion of the code
@@ -45,11 +50,13 @@ aws.config.update({
 var s3 = new aws.S3()
 var fs = require('fs')
 var async = require('async')
+var decoder = new (require('string_decoder').StringDecoder)('utf8')
 
 var uploadParameters = {}
 var taskEnded = false
 var filename
 var currentWriteStream
+var currentFileStartTime
 
 /*
 	generateNewUploadParameters
@@ -67,9 +74,9 @@ function generateNewUploadParameters(cb){
 			return
 		}
 
-		var now = new Date()
-		filename = address + '_' + now.getDate() + '-' +
-				'-' + now.getMonth() + '-' + now.getFullYear() + '_' + now.getHours() + ':' + now.getMinutes() + '_' + now.getTime() + '.log'
+		currentFileStartTime = new Date()
+		filename = address + '_' + currentFileStartTime.getDate() + '-' +
+				'-' + currentFileStartTime.getMonth() + '-' + currentFileStartTime.getFullYear() + '_' + currentFileStartTime.getHours() + ':' + currentFileStartTime.getMinutes() + '_' + currentFileStartTime.getTime() + '.log'
 
 		var key
 		if(argv.keyPrefix){
@@ -86,7 +93,7 @@ function generateNewUploadParameters(cb){
 			// ContentType: 'text/plain'
 		}
 
-		cb(null, uploadParameters, currentWriteStream)
+		cb(null, uploadParameters)
 
 	})
 
@@ -102,11 +109,22 @@ function generateNewUploadParameters(cb){
 */
 function completeCurrentUpload(cb){
 	s3.completeMultiPartUpload(uploadParameters, function(err, data){
+		if(err){
+			cb(err)
+			return
+		}
 
-		//uploadParameters need to be nullified to start a new upload
+		//Clear ou the current upload parameters
 		uploadParameters = null
 
-		cb(err, data)
+		//Clear out the write stream
+		currentWriteStream = null
+
+		//Remove the tmp log file
+		fs.unlink('./' + filename + '_tmp', function(err){
+			cb(err, data)
+		})
+
 	})
 }
 
@@ -142,7 +160,16 @@ function uploadCurrentChunk(cb){
 	var params = uploadParameters
 
 	s3.uploadPart(uploadParameters, function(err, data){
-		cb(err, data)
+		if(err){
+			cb(err)
+			return
+		} else if( currentFileStartTime.getTime() > (new Date()).getTime() - maxLogLife ){
+			//If the time is up, go ahead and end the upload
+			completeCurrentUpload(cb)
+		} else {
+			cb(null)
+		}
+
 	})
 }
 
@@ -176,7 +203,9 @@ function handleChunk(cb){
 						return
 					}
 
-					if(stats.size >= minimumChunkSize){
+					//If the file is beyond a certain size OR the maxLogLife has been triggered, upload the file.
+					if(stats.size >= minimumChunkSize ||
+						currentFileStartTime.getTime() > (new Date()).getTime() - maxLogLife ){
 						uploadCurrentChunk(function(err){
 							done(err)
 						})
@@ -188,9 +217,6 @@ function handleChunk(cb){
 		}
 
 	], function(err){
-		if(!argv.silent){
-			process.stdout.write(chunk)
-		}
 		cb(err)
 	})
 }
@@ -208,12 +234,16 @@ chunkQueue.drain = function(){
 
 
 //use stdIn as a stream
-process.stdin.setEncoding('utf8')
+// process.stdin.setEncoding('utf8')
 process.stdin.on('readable', function(){
 	var chunk = process.stdin.read()
 
 	if(chunk !== null){
-		chunkQueue.push(chunk)
+		if(!argv.silent){
+			process.stdout.write(chunk)
+		}
+
+		chunkQueue.push(decoder.write(chunk))
 	}
 
 })
